@@ -1,0 +1,48 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'hyv-audio-exporter'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=hyv-audio-exporter",
+                    "--package=hyv-audio-exporter"
+                ],
+                "filter": {
+                    "name": "hyv-audio-exporter",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "/mnt/SSD/Games/HSR/StarRail_Data/Persistent/Audio/AudioPackage/Windows/English/External0.pck",
+                "/mnt/ram/plc"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'hyv-audio-exporter'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=hyv-audio-exporter",
+                    "--package=hyv-audio-exporter"
+                ],
+                "filter": {
+                    "name": "hyv-audio-exporter",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
