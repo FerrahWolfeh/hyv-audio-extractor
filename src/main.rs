@@ -1,12 +1,15 @@
 use std::fs::{create_dir_all, File};
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write, Cursor};
 use std::path::Path;
-
+use byteorder::ReadBytesExt;
 use bytesize::ByteSize;
 use owo_colors::OwoColorize;
 
 mod wem2wav;
 mod pck_serilize;
+
+// Import the WEMFile struct
+use crate::pck_serilize::{Chunk, WEMFile};
 
 // Constantes úteis
 const BUFFER_SIZE: usize = 4096;
@@ -41,19 +44,31 @@ fn main() -> std::io::Result<()> {
             start_offset
         );
 
-        let (_, complete_size) =
-            parse_header(&mut reader, start_offset, &file_name)?;
+        // Instead of parsing the header naively, we now rely on WEMFile::from_read
         let output_file_name = format!("{file_name}_{found_files}.wem");
-        process_wave_file(
+        if process_wave_file(
             &mut reader,
             start_offset,
-            complete_size,
             output_dir,
             output_file_name,
-        )?;
-
-        found_files += 1;
-        global_offset = offset + complete_size as u64;
+        ).is_ok() {
+            found_files += 1;
+            // We don't know the exact size beforehand anymore; let process_wave_file handle it.
+            // For the next search, we need to advance past the extracted WEM file.
+            // A potential improvement would be to get the size from WEMFile::from_read if needed.
+            // For now, a simple heuristic based on the initial header size is used.
+            reader.seek(SeekFrom::Start(offset + 12u64))?; // Advance past the WAVE header
+            global_offset = offset + 12;
+        } else {
+            eprintln!(
+                "[{}] Failed to parse WEM file starting at offset {:#x}",
+                file_name.bold().red(),
+                start_offset
+            );
+            // If parsing fails, advance the offset slightly to avoid getting stuck.
+            reader.seek(SeekFrom::Start(offset + 1))?;
+            global_offset = offset + 1;
+        }
     }
 
     Ok(())
@@ -85,56 +100,122 @@ fn find_wave_marker(
     Ok(None)
 }
 
-/// Lê e valida o cabeçalho do arquivo WAVE.
-fn parse_header(
-    reader: &mut BufReader<File>,
-    start_offset: i64,
-    file_name: &str,
-) -> std::io::Result<(&'static str, u32)> {
-    reader.seek(SeekFrom::Start(start_offset as u64))?;
-    let mut header = [0u8; 8];
-    reader.read_exact(&mut header)?;
-
-    let header_type = match &header[..4] {
-        b"RIFF" => "RIFF",
-        b"RIFX" => "RIFX",
-        _ => panic!("Invalid WAVE header found!"),
-    };
-
-    let complete_size = u32::from_le_bytes(header[4..8].try_into().unwrap());
-    println!(
-        "[{}] HEADER: {header_type}, Reported Size: {}", file_name.bold().blue(),
-        ByteSize::b(complete_size as u64).to_string_as(true)
-    );
-
-    Ok((header_type, complete_size))
-}
-
-/// Processa o arquivo WAVE encontrado e cria a cópia corrigida.
+/// Processes the WAVE file by parsing it with WEMFile and saving it.
 fn process_wave_file(
     reader: &mut BufReader<File>,
     start_offset: i64,
-    complete_size: u32,
     output_dir: &Path,
     output_file_name: String,
 ) -> std::io::Result<()> {
     reader.seek(SeekFrom::Start(start_offset as u64))?;
 
-    let mut data = vec![0u8; complete_size as usize];
-    reader.read_exact(&mut data)?;
+    // Read enough bytes for the initial RIFF header and WEM header
+    let mut initial_bytes = vec![0u8; 20]; // 8 for RIFF + 12 for WEM
+    if reader.read_exact(&mut initial_bytes).is_err() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "Failed to read initial header bytes",
+        ));
+    }
 
-    // Corrigir o tamanho do cabeçalho do arquivo WAVE
-    data[4..8].copy_from_slice(&(complete_size - 8).to_le_bytes());
+    let mut cursor = Cursor::new(&initial_bytes);
 
-    let output_path = output_dir.join(&output_file_name);
-    create_dir_all(output_dir)?;
-    let mut output_file = File::create(output_path)?;
-    output_file.write_all(&data)?;
+    let riff_type = [
+        cursor.read_u8()? as char,
+        cursor.read_u8()? as char,
+        cursor.read_u8()? as char,
+        cursor.read_u8()? as char,
+    ];
 
-    println!(
-        "Saved corrected WAVE file: {}",
-        output_file_name.bold().green()
-    );
+    if riff_type != ['R', 'I', 'F', 'F'] && riff_type != ['R', 'I', 'F', 'X'] {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Invalid RIFF header",
+        ));
+    }
 
-    Ok(())
+    // Reset the reader to the start of the WEM file
+    reader.seek(SeekFrom::Start(start_offset as u64))?;
+
+    match WEMFile::from_read(reader) {
+        Ok(wem_file) => {
+            let output_path = output_dir.join(&output_file_name);
+            create_dir_all(output_dir)?;
+            let mut output_file = File::create(output_path)?;
+
+            // Serialize the WEMFile back to bytes and write it.
+            // This assumes you want to save the parsed structure.
+            // If you want to save the original bytes, you'd need to adjust.
+            let mut data = Vec::new();
+            let mut writer = Cursor::new(&mut data);
+
+            // Write RIFF header
+            for &c in &wem_file.header.ckid {
+                writer.write_all(&[c as u8])?;
+            }
+            writer.write_all(&wem_file.header.ck_size.to_le_bytes())?;
+            writer.write_all(&wem_file.header.waveid.to_le_bytes())?;
+
+            for chunk in &wem_file.chunks {
+                match chunk {
+                    Chunk::FMT(fmt) => {
+                        writer.write_all(b"fmt ")?;
+                        writer.write_all(&(fmt.size as u32).to_le_bytes())?;
+                        writer.write_all(&fmt.format_tag.to_le_bytes())?;
+                        writer.write_all(&fmt.channels.to_le_bytes())?;
+                        writer.write_all(&fmt.samples_per_sec.to_le_bytes())?;
+                        writer.write_all(&fmt.avg_bytes_per_sec.to_le_bytes())?;
+                        writer.write_all(&fmt.block_align.to_le_bytes())?;
+                        writer.write_all(&fmt.bits_per_sample.to_le_bytes())?;
+                        if let Some(v) = fmt.valid_bits_per_sample {
+                            writer.write_all(&v.to_le_bytes())?;
+                        }
+                        if let Some(m) = fmt.channel_mask {
+                            writer.write_all(&m.to_le_bytes())?;
+                        }
+                        if let Some(g) = fmt.guid {
+                            writer.write_all(g.as_ref())?;
+                        }
+                    }
+                    Chunk::JUNK(junk) => {
+                        writer.write_all(b"JUNK")?;
+                        writer.write_all(&(junk.junk.len() as u32).to_le_bytes())?;
+                        writer.write_all(&junk.junk)?;
+                    }
+                    Chunk::CUE(cue) => {
+                        writer.write_all(b"cue ")?;
+                        writer.write_all(&cue.cue_count.to_le_bytes())?;
+                    }
+                }
+            }
+            writer.write_all(b"data")?;
+            writer.write_all(&(wem_file.data.data.len() as u32).to_le_bytes())?;
+            writer.write_all(&wem_file.data.data)?;
+
+            // Correct RIFF size before writing
+            let riff_size_bytes = (data.len() as u32 + 4).to_le_bytes();
+            initial_bytes[4..8].copy_from_slice(&riff_size_bytes);
+
+            output_file.write_all(&initial_bytes[0..8])?; // Write corrected RIFF header
+            output_file.write_all(&data)?;
+
+            println!(
+                "Saved parsed WEM file: {}",
+                output_file_name.bold().green()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!(
+                "[{}] Error parsing WEM file at offset {:#x}: {}",
+                output_file_name.bold().red(),
+                start_offset,
+                e
+            );
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Failed to parse WEM file",
+            ))
+        }
+    }
 }
