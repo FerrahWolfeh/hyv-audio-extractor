@@ -1,8 +1,9 @@
 use std::fs::{create_dir_all, File};
-use std::io::{BufReader, Read, Seek, SeekFrom, Write, Cursor};
+use std::io::{BufReader, Read, Seek, SeekFrom, Write, Cursor, BufWriter};
 use std::path::Path;
 use byteorder::ReadBytesExt;
 use bytesize::ByteSize;
+use hound::{SampleFormat, WavSpec, WavWriter};
 use owo_colors::OwoColorize;
 
 mod wem2wav;
@@ -45,7 +46,7 @@ fn main() -> std::io::Result<()> {
         );
 
         // Instead of parsing the header naively, we now rely on WEMFile::from_read
-        let output_file_name = format!("{file_name}_{found_files}.wem");
+        let output_file_name = format!("{file_name}_{found_files}.wav");
         if process_wave_file(
             &mut reader,
             start_offset,
@@ -141,63 +142,98 @@ fn process_wave_file(
         Ok(wem_file) => {
             let output_path = output_dir.join(&output_file_name);
             create_dir_all(output_dir)?;
-            let mut output_file = File::create(output_path)?;
+            let mut output_file = File::create(&output_path)?;
+
+            // let wav_fmt = WavSpec {
+            //     channels: wem_file.fmt_chunk.channels,
+            //     sample_rate: wem_file.fmt_chunk.samples_per_sec,
+            //     bits_per_sample: wem_file.fmt_chunk.valid_bits_per_sample.unwrap(),
+            //     sample_format: SampleFormat::Int,
+            // };
+            // 
+            // let wav_writer = WavWriter::create(output_path, wav_fmt).unwrap();
+            
+            
 
             // Serialize the WEMFile back to bytes and write it.
             // This assumes you want to save the parsed structure.
             // If you want to save the original bytes, you'd need to adjust.
-            let mut data = Vec::new();
-            let mut writer = Cursor::new(&mut data);
-
+            
+            let mut writer = BufWriter::new(&mut output_file);
+            
             // Write RIFF header
-            for &c in &wem_file.header.ckid {
+            for &c in &wem_file.header.magic {
                 writer.write_all(&[c as u8])?;
             }
-            writer.write_all(&wem_file.header.ck_size.to_le_bytes())?;
-            writer.write_all(&wem_file.header.waveid.to_le_bytes())?;
-
-            for chunk in &wem_file.chunks {
-                match chunk {
-                    Chunk::FMT(fmt) => {
-                        writer.write_all(b"fmt ")?;
-                        writer.write_all(&(fmt.size as u32).to_le_bytes())?;
-                        writer.write_all(&fmt.format_tag.to_le_bytes())?;
-                        writer.write_all(&fmt.channels.to_le_bytes())?;
-                        writer.write_all(&fmt.samples_per_sec.to_le_bytes())?;
-                        writer.write_all(&fmt.avg_bytes_per_sec.to_le_bytes())?;
-                        writer.write_all(&fmt.block_align.to_le_bytes())?;
-                        writer.write_all(&fmt.bits_per_sample.to_le_bytes())?;
-                        if let Some(v) = fmt.valid_bits_per_sample {
-                            writer.write_all(&v.to_le_bytes())?;
-                        }
-                        if let Some(m) = fmt.channel_mask {
-                            writer.write_all(&m.to_le_bytes())?;
-                        }
-                        if let Some(g) = fmt.guid {
-                            writer.write_all(g.as_ref())?;
-                        }
-                    }
-                    Chunk::JUNK(junk) => {
-                        writer.write_all(b"JUNK")?;
-                        writer.write_all(&(junk.junk.len() as u32).to_le_bytes())?;
-                        writer.write_all(&junk.junk)?;
-                    }
-                    Chunk::CUE(cue) => {
-                        writer.write_all(b"cue ")?;
-                        writer.write_all(&cue.cue_count.to_le_bytes())?;
-                    }
-                }
+            writer.write_all(&wem_file.header.file_size.to_le_bytes())?;
+            
+            for &c in &wem_file.header.wave {
+                writer.write_all(&[c as u8])?;
             }
-            writer.write_all(b"data")?;
-            writer.write_all(&(wem_file.data.data.len() as u32).to_le_bytes())?;
-            writer.write_all(&wem_file.data.data)?;
 
-            // Correct RIFF size before writing
-            let riff_size_bytes = (data.len() as u32 + 4).to_le_bytes();
-            initial_bytes[4..8].copy_from_slice(&riff_size_bytes);
+            let fmt_chunk = wem_file.fmt_chunk;
 
-            output_file.write_all(&initial_bytes[0..8])?; // Write corrected RIFF header
-            output_file.write_all(&data)?;
+            for &c in &fmt_chunk.r#type {
+                writer.write_all(&[c as u8])?;
+            }
+            
+            writer.write_all(&fmt_chunk.size.to_le_bytes())?;
+            
+            writer.write_all(&fmt_chunk.chunk_data.format_tag.to_le_bytes())?;
+            writer.write_all(&fmt_chunk.chunk_data.channels.to_le_bytes())?;
+            writer.write_all(&fmt_chunk.chunk_data.samples_per_sec.to_le_bytes())?;
+            writer.write_all(&fmt_chunk.chunk_data.avg_bitrate.to_le_bytes())?;
+            writer.write_all(&fmt_chunk.chunk_data.block_size.to_le_bytes())?;
+            writer.write_all(&fmt_chunk.chunk_data.bits_per_sample.to_le_bytes())?;
+            writer.write_all(&fmt_chunk.chunk_data.extra_size.to_le_bytes())?;
+            writer.write_all(&fmt_chunk.chunk_data.remainder_data)?;
+            
+            // 
+            // 
+            // for chunk in &wem_file.other_chunks {
+            //     match chunk {
+            //         Chunk::FMT(fmt) => {
+            //             writer.write_all(b"fmt ")?;
+            //             writer.write_all(&(fmt.size as u32).to_le_bytes())?;
+            //             writer.write_all(&fmt.format_tag.to_le_bytes())?;
+            //             writer.write_all(&fmt.channels.to_le_bytes())?;
+            //             writer.write_all(&fmt.samples_per_sec.to_le_bytes())?;
+            //             writer.write_all(&fmt.avg_bytes_per_sec.to_le_bytes())?;
+            //             writer.write_all(&fmt.block_align.to_le_bytes())?;
+            //             writer.write_all(&fmt.bits_per_sample.to_le_bytes())?;
+            //             if let Some(v) = fmt.valid_bits_per_sample {
+            //                 writer.write_all(&v.to_le_bytes())?;
+            //             }
+            //             if let Some(m) = fmt.channel_mask {
+            //                 writer.write_all(&m.to_le_bytes())?;
+            //             }
+            //             if let Some(g) = fmt.guid {
+            //                 writer.write_all(g.as_ref())?;
+            //             }
+            //         }
+            //         Chunk::JUNK(junk) => {
+            //             writer.write_all(b"JUNK")?;
+            //             writer.write_all(&(junk.junk.len() as u32).to_le_bytes())?;
+            //             writer.write_all(&junk.junk)?;
+            //         }
+            //         Chunk::CUE(cue) => {
+            //             writer.write_all(b"cue ")?;
+            //             writer.write_all(&cue.cue_count.to_le_bytes())?;
+            //         }
+            //     }
+            // }
+
+            let data_chunk = wem_file.data;
+
+            for &c in &data_chunk.r#type {
+                writer.write_all(&[c as u8])?;
+            }
+
+            writer.write_all(&data_chunk.size.to_le_bytes())?;
+            
+            writer.write_all(&data_chunk.chunk_data.data)?;
+            
+            writer.flush()?;
 
             println!(
                 "Saved parsed WEM file: {}",
