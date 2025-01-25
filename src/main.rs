@@ -11,7 +11,7 @@ mod pck_file;
 // Import the WEMFile struct
 use crate::pck_file::{Chunk, WEMFile};
 
-// Constantes úteis
+// Constants
 const BUFFER_SIZE: usize = 4096;
 const WAVE_MARKER: &[u8; 4] = b"WAVE";
 
