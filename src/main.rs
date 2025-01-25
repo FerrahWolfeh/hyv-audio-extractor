@@ -70,7 +70,7 @@ fn main() -> std::io::Result<()> {
     Ok(())
 }
 
-/// Procura pelo marcador "WAVE" no buffer.
+/// Search for a WAVE marker inside the pck file.
 fn find_wave_marker(
     reader: &mut BufReader<File>,
     buffer: &mut [u8; BUFFER_SIZE],
