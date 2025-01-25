@@ -1,3 +1,4 @@
+#![deny(clippy::all)]
 use byteorder::ReadBytesExt;
 use bytesize::ByteSize;
 use hound::{SampleFormat, WavSpec, WavWriter};
@@ -36,7 +37,7 @@ fn main() -> std::io::Result<()> {
     let mut found_files = 0;
 
     while let Some(offset) = find_wave_marker(&mut reader, &mut buffer, global_offset)? {
-        let start_offset = offset as i64 - 8;
+        let start_offset = offset - 8;
         println!(
             "[{}] Found WAVE marker at offset {:#x} | File starts at {:#x}",
             file_name.bold().blue(),
@@ -46,7 +47,7 @@ fn main() -> std::io::Result<()> {
 
         // Instead of parsing the header naively, we now rely on WEMFile::from_read
         let output_file_name = format!("{file_name}_{found_files}.wav");
-        if process_wave_file(&mut reader, start_offset, output_dir, output_file_name).is_ok() {
+        if process_wave_file(&mut reader, start_offset, output_dir, &output_file_name).is_ok() {
             found_files += 1;
             // We don't know the exact size beforehand anymore; let process_wave_file handle it.
             // For the next search, we need to advance past the extracted WEM file.
@@ -95,14 +96,14 @@ fn find_wave_marker(
     Ok(None)
 }
 
-/// Processes the WAVE file by parsing it with WEMFile and saving it.
+/// Processes the WAVE file by parsing it with `WEMFile` and saving it.
 fn process_wave_file(
     reader: &mut BufReader<File>,
-    start_offset: i64,
+    start_offset: u64,
     output_dir: &Path,
-    output_file_name: String,
+    output_file_name: &str,
 ) -> std::io::Result<()> {
-    reader.seek(SeekFrom::Start(start_offset as u64))?;
+    reader.seek(SeekFrom::Start(start_offset))?;
 
     // Read enough bytes for the initial RIFF header and WEM header
     let mut initial_bytes = vec![0u8; 20]; // 8 for RIFF + 12 for WEM
@@ -130,11 +131,11 @@ fn process_wave_file(
     }
 
     // Reset the reader to the start of the WEM file
-    reader.seek(SeekFrom::Start(start_offset as u64))?;
+    reader.seek(SeekFrom::Start(start_offset))?;
 
     match WEMFile::from_read(reader) {
         Ok(wem_file) => {
-            let output_path = output_dir.join(&output_file_name);
+            let output_path = output_dir.join(output_file_name);
             create_dir_all(output_dir)?;
             let mut output_file = File::create(&output_path)?;
 

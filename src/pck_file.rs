@@ -1,4 +1,4 @@
-use std::convert::TryInto;
+#![allow(dead_code)]
 use std::io::{Cursor, Read, Seek, Result as IoResult, Error as IoError, ErrorKind};
 use byteorder::{LittleEndian, ReadBytesExt};
 
@@ -34,7 +34,8 @@ pub struct FMTChunk {
     pub avg_bitrate: u32,
     pub block_size: u16,
     pub bits_per_sample: u16,
-    pub extra_size: u16,
+    pub extra_size: u16, // According to vgmstream source code, this extra size sort of defines what kind of encoding the audio file has.
+                         // Honkai: Star Rail as an example, has this field set to 0x30, which is identified as Custom Vorbis 
     pub remainder_data: Vec<u8>,
 }
 
@@ -63,9 +64,9 @@ pub struct WEMFile {
 
 #[derive(Debug)]
 pub enum Chunk {
-    FMT(FMTChunk),
-    JUNK(JUNKChunk),
-    CUE(CUEChunk),
+    Fmt(FMTChunk),
+    Junk(JUNKChunk),
+    Cue(CUEChunk),
     // Add other chunk types as needed
 }
 
@@ -151,9 +152,19 @@ impl WEMFile {
                     reader.read_exact(&mut data)?;
                     data_chunk_data = RIFFChunk::new([ 'd', 'a', 't', 'a'], chunk_size, DataChunk { data });
                 }
+                "cue " => {
+                    let mut data = vec![0u8; chunk_size as usize];
+                    reader.read_exact(&mut data)?;
+                    other_chunks.push(RIFFChunk::new(['c', 'u', 'e', ' '], chunk_size, Chunk::Cue(CUEChunk { cue_count: 0 }))); // I won't bother with this for now.
+                }
+                "junk" => {
+                    let mut data = vec![0u8; chunk_size as usize];
+                    reader.read_exact(&mut data)?;
+                    other_chunks.push(RIFFChunk::new(['j', 'u', 'n', 'k'], chunk_size, Chunk::Junk(JUNKChunk { junk: data }))); // I won't bother with this also. Seems pointless...
+                }
                 _ => {
                     // Skip unknown chunks
-                    reader.seek(std::io::SeekFrom::Current(chunk_size as i64))?;
+                    reader.seek(std::io::SeekFrom::Current(i64::from(chunk_size)))?;
                 }
             }
         }
