@@ -1,16 +1,15 @@
-use std::fs::{create_dir_all, File};
-use std::io::{BufReader, Read, Seek, SeekFrom, Write, Cursor, BufWriter};
-use std::path::Path;
 use byteorder::ReadBytesExt;
 use bytesize::ByteSize;
 use hound::{SampleFormat, WavSpec, WavWriter};
 use owo_colors::OwoColorize;
+use std::fs::{create_dir_all, File};
+use std::io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write};
+use std::path::Path;
 
-mod wem2wav;
-mod pck_serilize;
+mod pck_file;
 
 // Import the WEMFile struct
-use crate::pck_serilize::{Chunk, WEMFile};
+use crate::pck_file::{Chunk, WEMFile};
 
 // Constantes úteis
 const BUFFER_SIZE: usize = 4096;
@@ -47,12 +46,7 @@ fn main() -> std::io::Result<()> {
 
         // Instead of parsing the header naively, we now rely on WEMFile::from_read
         let output_file_name = format!("{file_name}_{found_files}.wav");
-        if process_wave_file(
-            &mut reader,
-            start_offset,
-            output_dir,
-            output_file_name,
-        ).is_ok() {
+        if process_wave_file(&mut reader, start_offset, output_dir, output_file_name).is_ok() {
             found_files += 1;
             // We don't know the exact size beforehand anymore; let process_wave_file handle it.
             // For the next search, we need to advance past the extracted WEM file.
@@ -144,29 +138,18 @@ fn process_wave_file(
             create_dir_all(output_dir)?;
             let mut output_file = File::create(&output_path)?;
 
-            // let wav_fmt = WavSpec {
-            //     channels: wem_file.fmt_chunk.channels,
-            //     sample_rate: wem_file.fmt_chunk.samples_per_sec,
-            //     bits_per_sample: wem_file.fmt_chunk.valid_bits_per_sample.unwrap(),
-            //     sample_format: SampleFormat::Int,
-            // };
-            // 
-            // let wav_writer = WavWriter::create(output_path, wav_fmt).unwrap();
-            
-            
-
             // Serialize the WEMFile back to bytes and write it.
             // This assumes you want to save the parsed structure.
             // If you want to save the original bytes, you'd need to adjust.
-            
+
             let mut writer = BufWriter::new(&mut output_file);
-            
+
             // Write RIFF header
             for &c in &wem_file.header.magic {
                 writer.write_all(&[c as u8])?;
             }
             writer.write_all(&wem_file.header.file_size.to_le_bytes())?;
-            
+
             for &c in &wem_file.header.wave {
                 writer.write_all(&[c as u8])?;
             }
@@ -176,9 +159,9 @@ fn process_wave_file(
             for &c in &fmt_chunk.r#type {
                 writer.write_all(&[c as u8])?;
             }
-            
+
             writer.write_all(&fmt_chunk.size.to_le_bytes())?;
-            
+
             writer.write_all(&fmt_chunk.chunk_data.format_tag.to_le_bytes())?;
             writer.write_all(&fmt_chunk.chunk_data.channels.to_le_bytes())?;
             writer.write_all(&fmt_chunk.chunk_data.samples_per_sec.to_le_bytes())?;
@@ -187,41 +170,6 @@ fn process_wave_file(
             writer.write_all(&fmt_chunk.chunk_data.bits_per_sample.to_le_bytes())?;
             writer.write_all(&fmt_chunk.chunk_data.extra_size.to_le_bytes())?;
             writer.write_all(&fmt_chunk.chunk_data.remainder_data)?;
-            
-            // 
-            // 
-            // for chunk in &wem_file.other_chunks {
-            //     match chunk {
-            //         Chunk::FMT(fmt) => {
-            //             writer.write_all(b"fmt ")?;
-            //             writer.write_all(&(fmt.size as u32).to_le_bytes())?;
-            //             writer.write_all(&fmt.format_tag.to_le_bytes())?;
-            //             writer.write_all(&fmt.channels.to_le_bytes())?;
-            //             writer.write_all(&fmt.samples_per_sec.to_le_bytes())?;
-            //             writer.write_all(&fmt.avg_bytes_per_sec.to_le_bytes())?;
-            //             writer.write_all(&fmt.block_align.to_le_bytes())?;
-            //             writer.write_all(&fmt.bits_per_sample.to_le_bytes())?;
-            //             if let Some(v) = fmt.valid_bits_per_sample {
-            //                 writer.write_all(&v.to_le_bytes())?;
-            //             }
-            //             if let Some(m) = fmt.channel_mask {
-            //                 writer.write_all(&m.to_le_bytes())?;
-            //             }
-            //             if let Some(g) = fmt.guid {
-            //                 writer.write_all(g.as_ref())?;
-            //             }
-            //         }
-            //         Chunk::JUNK(junk) => {
-            //             writer.write_all(b"JUNK")?;
-            //             writer.write_all(&(junk.junk.len() as u32).to_le_bytes())?;
-            //             writer.write_all(&junk.junk)?;
-            //         }
-            //         Chunk::CUE(cue) => {
-            //             writer.write_all(b"cue ")?;
-            //             writer.write_all(&cue.cue_count.to_le_bytes())?;
-            //         }
-            //     }
-            // }
 
             let data_chunk = wem_file.data;
 
@@ -230,15 +178,12 @@ fn process_wave_file(
             }
 
             writer.write_all(&data_chunk.size.to_le_bytes())?;
-            
+
             writer.write_all(&data_chunk.chunk_data.data)?;
-            
+
             writer.flush()?;
 
-            println!(
-                "Saved parsed WEM file: {}",
-                output_file_name.bold().green()
-            );
+            println!("Saved parsed WEM file: {}", output_file_name.bold().green());
             Ok(())
         }
         Err(e) => {

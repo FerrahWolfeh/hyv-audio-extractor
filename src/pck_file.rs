@@ -135,7 +135,7 @@ impl WEMFile {
                     
                     fmt_cursor.read_exact(&mut remainder_data)?;
 
-                    fmt_chunk = RIFFChunk::new(['f', 'm', 't', ' '], chunk_size + 8, FMTChunk {
+                    fmt_chunk = RIFFChunk::new(['f', 'm', 't', ' '], chunk_size, FMTChunk {
                         format_tag,
                         channels,
                         samples_per_sec,
@@ -146,21 +146,10 @@ impl WEMFile {
                         remainder_data
                     });
                 }
-                "JUNK" => {
-                    let mut junk_data = vec![0u8; chunk_size as usize];
-                    reader.read_exact(&mut junk_data)?;
-                    other_chunks.push(RIFFChunk::new(['J', 'U', 'N', 'K'], chunk_size + 8, Chunk::JUNK(JUNKChunk { junk: junk_data })));
-                }
-                "cue " => {
-                    let mut cue_bytes = vec![0u8; chunk_size as usize];
-                    reader.read_exact(&mut cue_bytes)?;
-                    let cue_count = u32::from_le_bytes(cue_bytes[0..4].try_into().unwrap());
-                    other_chunks.push(RIFFChunk::new(['c', 'u', 'e', ' '], chunk_size + 8, Chunk::CUE(CUEChunk { cue_count })));
-                }
                 "data" => {
                     let mut data = vec![0u8; chunk_size as usize];
                     reader.read_exact(&mut data)?;
-                    data_chunk_data = RIFFChunk::new([ 'd', 'a', 't', 'a'], chunk_size + 8, DataChunk { data });
+                    data_chunk_data = RIFFChunk::new([ 'd', 'a', 't', 'a'], chunk_size, DataChunk { data });
                 }
                 _ => {
                     // Skip unknown chunks
