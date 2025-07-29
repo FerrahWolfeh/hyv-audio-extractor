@@ -1,7 +1,6 @@
 #![deny(clippy::all)]
 use byteorder::ReadBytesExt;
 use bytesize::ByteSize;
-use hound::{SampleFormat, WavSpec, WavWriter};
 use owo_colors::OwoColorize;
 use std::fs::{create_dir_all, File};
 use std::io::{BufReader, BufWriter, Cursor, Read, Seek, SeekFrom, Write};
@@ -10,7 +9,7 @@ use std::path::Path;
 mod pck_file;
 
 // Import the WEMFile struct
-use crate::pck_file::{Chunk, WEMFile};
+use crate::pck_file::WEMFile;
 
 // Constants
 const BUFFER_SIZE: usize = 4096;
